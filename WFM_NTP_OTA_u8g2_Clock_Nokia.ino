@@ -22,31 +22,6 @@
   SOFTWARE.
  **************************************************************************/
 
-/*
-   ESP8266 Arduino IDE
-
-   WiFi clock for PCD8544 LCD display periodically synchronized with Network
-   Time Protocol servers.
-
-   Synchronizes with time.nist.gov which randomly selects from a pool of
-   NTP (Network Time Protocol) servers.
-
-   The PCD8544 LCD driver is a fork of the Adafruit driver with changes for the ESP8266.
-   Be sure to use the esp8266 branch!
-
-   https://github.com/bbx10/Adafruit-PCD8544-Nokia-5110-LCD-library/tree/esp8266
-
-   The Time library provides date and time with external date time sources. The library
-   requests UTC date and time from a Network Time Protocol (NTP) server every 5 minutes.
-   In between calls to the NTP server, the library uses the millis() function to update
-   the date and time. The NTP part of this program is based on the Time_NTP example.
-
-   https://github.com/PaulStoffregen/Time
-
-   The Adafruit_GFX library should be installed using the Arduino IDE Library manager.
-   No changes are needed for the ESP8266.
-
-*/
 // Libraries needed for WiFi Manager
 #include <WiFiManager.h>
 #include <ESP8266WebServer.h>
@@ -85,9 +60,9 @@ Ticker ticker;
     Lookup the IP address for the host name instead */
 static const char ntpServerName[] = "time.nist.gov";
 static const char tzName[] = "Eastern";
-static const int timeZone = -4;  // Eastern Standard Time (USA)
+static const int timeZone = -5;  // Eastern Standard Time (USA)
 
-int DST; // -4 for DST, -5 for non DST
+boolean DST; // 1 for DST, 0 for not
 int EEPROMaddress = 0;
 
 
@@ -193,9 +168,9 @@ void setup()
   //  Serial.println("EEPROM has been written as 1");
 
   //DST Time Correction
-  DST = EEPROM.read(EEPROMaddress);
-  Serial.print("EEPROM data reads as : ");
-  Serial.println(DST);
+  //  DST = EEPROM.read(EEPROMaddress);
+  //  Serial.print("EEPROM data reads as : ");
+  //  Serial.println(DST);
 
   //OTA section
   ArduinoOTA.setHostname("ESPOTAClock");
@@ -260,14 +235,19 @@ void digitalClockDisplay() {
   char *dayOfWeek;
   breakTime(now(), tm);
   dayOfWeek = dayShortStr(tm.Wday);
+  DST = (IsDST(tm.Month, tm.Day, tm.Wday));
   // digital clock display of the time
   Serial.printf("%s %02d %02d %04d %02d:%02d:%02d\r\n",
                 dayOfWeek, tm.Month, tm.Day, tm.Year + 1970,
-                (tm.Hour + (DST * -1)), tm.Minute, tm.Second);
+                (tm.Hour + DST), tm.Minute, tm.Second);
+
+//  Serial.println( DST );
+
 
 
   u8g2.firstPage();
   do {
+    u8g2.setFontDirection(0);
 
     //Little numerals for date across top
     u8g2.setFont(u8g2_font_prospero_bold_nbp_tf);
@@ -275,13 +255,15 @@ void digitalClockDisplay() {
     u8g2.printf("%s %02d %02d %04d\n", dayOfWeek, tm.Month, tm.Day, tm.Year + 1970);
 
     // seconds
-    u8g2.setCursor(68, 47);
+    u8g2.setCursor(64, 47);
     u8g2.printf("%02d", tm.Second);
+
+
 
     //Big Numerals for time
     u8g2.setFont(  u8g2_font_helvB24_tn);  //u8g2_font_logisoso24_tf Second Choice
     u8g2.setCursor(1, 35);
-    u8g2.printf("%02d", tm.Hour + (DST * -1));
+    u8g2.printf("%02d", tm.Hour + DST);
 
     u8g2.setCursor(35, 32);
     u8g2.print(":");  //Raising the colon higher than the bottom line
@@ -293,6 +275,12 @@ void digitalClockDisplay() {
     u8g2.setDrawColor(1); /* color  for the box */
     u8g2.drawFrame(0, 38, 61, 10);
     u8g2.drawBox(1, 38, (tm.Second), 10);
+    if (IsDST(tm.Month, tm.Day, tm.Wday)) {
+      u8g2.setFont(u8g2_font_blipfest_07_tr);
+      u8g2.setFontDirection(1);
+      u8g2.drawStr(77, 37, "DST");
+
+    }
 
   } while ( u8g2.nextPage() );
   delay(50);
@@ -355,4 +343,22 @@ void sendNTPpacket(IPAddress & address)
   Udp.write(packetBuffer, NTP_PACKET_SIZE);
   Udp.endPacket();
 }
+// IsDST() returns true if DST, false otherwise
+// variables: tm.Month=Month, - month [1-12], tm.Day - date [1-31], dw - day of the week [0-Sunday, 1-Monday etc.]tm.Month, tm.Day
+// http://woodsgood.ca/projects/2015/03/13/daylight-saving-time-simplified/
 
+boolean IsDST(byte Month, byte Day, byte Wday) {
+  Day = Day - 1;  //DST adjustment needed to compensate for Day of week number difference
+
+  if (Month < 3 || Month > 11) {
+    return false;  // January, February, and December are out.
+  }
+  if (Month > 3 && Month < 11) {
+    return true;   // April to October are in DST
+  }
+  int lastSunday = (Day) - (Wday);
+  if (Month == 3) {
+    return lastSunday >= 8;  // In March, we are DST if the previous Sunday was on or after the 8th.
+  }
+  return lastSunday <= 0;                       // In November we must be before the first Sunday to be DST - the previous Sunday must be before the 1st.
+}
